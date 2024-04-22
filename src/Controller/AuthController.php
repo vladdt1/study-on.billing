@@ -52,7 +52,7 @@ class AuthController extends AbstractController
      *         description="Invalid data for registration"
      *     )
      * )
-     */
+    */
     #[Route('/api/v1/register', name: 'api_register', methods: ['POST'])]
     public function register(Request $request, SerializerInterface $serializer, ValidatorInterface $validator, TokenGeneratorInterface $tokenGenerator, UserPasswordHasherInterface $passwordHasher, EntityManagerInterface $entityManager, UserRepository $userRepository): Response
     {
@@ -79,8 +79,17 @@ class AuthController extends AbstractController
 
         $token = $tokenGenerator->generateToken($user);
 
+        // refresh token
+        $refreshToken = $refreshTokenManager->create();
+        $refreshToken->setUsername($user->getEmail());
+        $refreshToken->setRefreshToken();
+        $refreshToken->setValid((new \DateTime())->add(new \DateInterval('P1D')));
+        $entityManager->persist($refreshToken);
+        $entityManager->flush();
+
         return $this->json([
             'token' => $token,
+            'refresh_token' => $refreshToken->getRefreshToken(),
             'roles' => $user->getRoles(),
         ], Response::HTTP_CREATED);
     }
@@ -106,7 +115,6 @@ class AuthController extends AbstractController
      *     )
      * )
     */
-
     #[Route('/api/v1/users/current', name: 'get_current_user', methods: ['GET'])]
     public function getCurrentUser(#[CurrentUser] ?User $user): JsonResponse
     {
@@ -118,6 +126,70 @@ class AuthController extends AbstractController
             'username' => $user->getUserIdentifier(),
             'roles' => $user->getRoles(),
             'balance' => $user->getBalance(),
+        ]);
+    }
+
+    /**
+     * @OA\Post(
+     *     path="/api/v1/token/refresh",
+     *     summary="Обновление JWT токена",
+     *     description="Получает новый JWT токен, используя действующий refresh токен.",
+     *     @OA\RequestBody(
+     *         description="Требуется refresh токен для получения нового JWT токена",
+     *         required=true,
+     *         @OA\JsonContent(
+     *             required={"refresh_token"},
+     *             @OA\Property(property="refresh_token", type="string", example="your_refresh_token_here"),
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Успешное обновление токена",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="token", type="string", example="new_jwt_token_here"),
+     *             @OA\Property(property="refresh_token", type="string", example="new_or_same_refresh_token_here")
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=400,
+     *         description="Неверный запрос, отсутствует refresh токен"
+     *     ),
+     *     @OA\Response(
+     *         response=401,
+     *         description="Refresh токен недействителен или истек его срок"
+     *     ),
+     *     @OA\Response(
+     *         response=404,
+     *         description="Пользователь не найден"
+     *     )
+     * )
+    */
+    #[Route('/api/v1/token/refresh', name: 'api_token_refresh', methods: ['POST'])]
+    public function refreshToken(Request $request, RefreshTokenManagerInterface $refreshTokenManager, JwtTokenGenerator $jwtTokenGenerator, EntityManagerInterface $entityManager, UserRepository $userRepository): JsonResponse
+    {
+        $requestData = json_decode($request->getContent(), true);
+        $refreshTokenValue = $requestData['refresh_token'] ?? null;
+
+        if (!$refreshTokenValue) {
+            return $this->json(['message' => 'Отсутствует токен обновления.'], Response::HTTP_BAD_REQUEST);
+        }
+
+        $refreshToken = $refreshTokenManager->get($refreshTokenValue);
+        if (!$refreshToken || $refreshToken->getValid() < new \DateTime()) {
+            return $this->json(['message' => 'Токен обновления недействителен или срок его действия истек.'], Response::HTTP_UNAUTHORIZED);
+        }
+
+        $user = $userRepository->findOneByEmail($refreshToken->getUsername());
+        if (!$user) {
+            return $this->json(['message' => 'Пользователь не найден.'], Response::HTTP_NOT_FOUND);
+        }
+
+        $token = $jwtTokenGenerator->generateToken($user);
+
+        return $this->json([
+            'token' => $token,
+            'refresh_token' => $refreshTokenValue,
         ]);
     }
 }
