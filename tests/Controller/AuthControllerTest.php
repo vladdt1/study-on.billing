@@ -25,12 +25,12 @@ class AuthControllerTest extends WebTestCase
                 [],
                 ['CONTENT_TYPE' => 'application/json'],
                 json_encode([
-                    'email' => 'test1@gmail.com',
+                    'email' => 'useer1@gmail.com',
                     'password' => 'password'
                 ])
             );
 
-            $this->assertEquals(Response::HTTP_CREATED, $client->getResponse()->getStatusCode());
+            $this->assertEquals(Response::HTTP_OK, $client->getResponse()->getStatusCode());
         } finally {
             $entityManager->rollback();
         }

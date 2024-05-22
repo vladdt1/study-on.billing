@@ -6,6 +6,7 @@ use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\Routing\Annotation\Route;
 use App\Repository\TransactionRepository;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Bundle\SecurityBundle\Security;
 use OpenApi\Annotations as OA;
 use Nelmio\ApiDocBundle\Annotation\Model;
@@ -51,6 +52,10 @@ class TransactionController extends AbstractController
     public function fetchUserTransactions(TransactionRepository $transactionRepository): JsonResponse
     {
         $currentUser = $this->security->getUser();
+        if (!$currentUser) {
+            $errors = ['error' => 'Требуется авторизация'];
+            return new JsonResponse($errors, Response::HTTP_UNAUTHORIZED);
+        }
         $userTransactions = $transactionRepository->findBy(['client' => $currentUser]);
 
         $transactionList = array_map(static function ($transaction) {
