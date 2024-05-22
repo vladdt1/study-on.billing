@@ -21,8 +21,8 @@ class Transaction
     #[ORM\ManyToOne(inversedBy: 'transactions')]
     private ?Course $course = null;
 
-    #[ORM\Column(type: Types::SMALLINT)]
-    private ?int $type = null;
+    #[ORM\Column(type: Types::STRING, length: 255)]
+    private ?string $type = null;
 
     #[ORM\Column]
     private ?float $amount = null;
@@ -32,6 +32,12 @@ class Transaction
 
     #[ORM\Column]
     private ?\DateTimeImmutable $expiresAt = null;
+
+    public function __construct()
+    {
+        $this->createdAt = new \DateTimeImmutable();
+        $this->expiresAt = (new \DateTimeImmutable())->modify('+100 year');
+    }
 
     public function getId(): ?int
     {
@@ -62,17 +68,16 @@ class Transaction
         return $this;
     }
 
-    public function getType(): ?int
-    {
-        return $this->type;
-    }
+    public function getType(): ?string
+{
+    return $this->type;
+}
 
-    public function setType(int $type): static
-    {
-        $this->type = $type;
-
-        return $this;
-    }
+public function setType(string $type): self
+{
+    $this->type = $type;
+    return $this;
+}
 
     public function getAmount(): ?float
     {

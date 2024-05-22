@@ -11,6 +11,10 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Entity(repositoryClass: CourseRepository::class)]
 class Course
 {
+    const TYPE_BUY = 1;
+    const TYPE_RENT = 2;
+    const TYPE_FREE = 0;
+
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
@@ -18,6 +22,12 @@ class Course
 
     #[ORM\Column(length: 255)]
     private ?string $code = null;
+
+    #[ORM\Column(length: 255)]
+    private ?string $title = null;
+
+    #[ORM\Column(type: "text", nullable: true)]
+    private ?string $description = null;
 
     #[ORM\Column(type: Types::SMALLINT)]
     private ?int $type = null;
@@ -38,14 +48,37 @@ class Course
         return $this->id;
     }
 
-    public function getcode(): ?string
+    public function getCode(): ?string
     {
         return $this->code;
     }
 
-    public function setcode(?string $cщcode): static
+    public function setCode(?string $code): self
     {
-        $this->code = $cщcode;
+        $this->code = $code;
+
+        return $this;
+    }
+
+    public function getTitle(): ?string
+    {
+        return $this->title;
+    }
+
+    public function setTitle(?string $title): self
+    {
+        $this->title = $title;
+        return $this;
+    }
+
+    public function getDescription(): ?string
+    {
+        return $this->description;
+    }
+
+    public function setDescription(?string $description): self
+    {
+        $this->description = $description;
 
         return $this;
     }
@@ -55,10 +88,9 @@ class Course
         return $this->type;
     }
 
-    public function setType(int $type): static
+    public function setType(int $type): self
     {
         $this->type = $type;
-
         return $this;
     }
 
@@ -67,7 +99,7 @@ class Course
         return $this->price;
     }
 
-    public function setPrice(?float $price): static
+    public function setPrice(?float $price): self
     {
         $this->price = $price;
 
@@ -82,7 +114,7 @@ class Course
         return $this->transactions;
     }
 
-    public function addTransaction(Transaction $transaction): static
+    public function addTransaction(Transaction $transaction): self
     {
         if (!$this->transactions->contains($transaction)) {
             $this->transactions->add($transaction);
@@ -92,7 +124,7 @@ class Course
         return $this;
     }
 
-    public function removeTransaction(Transaction $transaction): static
+    public function removeTransaction(Transaction $transaction): self
     {
         if ($this->transactions->removeElement($transaction)) {
             // set the owning side to null (unless already changed)

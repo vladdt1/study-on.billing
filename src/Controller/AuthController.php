@@ -18,6 +18,8 @@ use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use OpenApi\Annotations as OA;
 use Nelmio\ApiDocBundle\Annotation\Model;
+use App\Security\JwtTokenGenerator;
+use Gesdinet\JWTRefreshTokenBundle\Model\RefreshTokenManagerInterface;
 
 
 class AuthController extends AbstractController
@@ -31,78 +33,89 @@ class AuthController extends AbstractController
     /**
      * @OA\Post(
      *     path="/api/v1/register",
-     *     tags={"User Management"},
-     *     summary="Register a new user",
-     *     description="Creates a new user and returns a JWT token.",
+     *     summary="Регистрация пользователя",
      *     @OA\RequestBody(
+     *         description="Данные пользователя",
      *         required=true,
-     *         @OA\JsonContent(ref=@Model(type=RegistrationRequest::class))
+     *         @OA\JsonContent(
+     *             ref=@Model(type=RegistrationRequest::class)
+     *         )
      *     ),
      *     @OA\Response(
      *         response=201,
-     *         description="User successfully created",
+     *         description="Пользователь успешно создан",
      *         @OA\JsonContent(
      *             type="object",
-     *             @OA\Property(property="token", type="string"),
+     *             @OA\Property(property="token", type="string", example="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."),
      *             @OA\Property(property="roles", type="array", @OA\Items(type="string"))
      *         )
      *     ),
      *     @OA\Response(
      *         response=400,
-     *         description="Invalid data for registration"
+     *         description="Неверные данные для регистрации"
      *     )
      * )
-    */
+     */
     #[Route('/api/v1/register', name: 'api_register', methods: ['POST'])]
-    public function register(Request $request, SerializerInterface $serializer, ValidatorInterface $validator, TokenGeneratorInterface $tokenGenerator, UserPasswordHasherInterface $passwordHasher, EntityManagerInterface $entityManager, UserRepository $userRepository): Response
+    public function register(
+        Request $request, 
+        SerializerInterface $serializer, 
+        ValidatorInterface $validator, 
+        UserPasswordHasherInterface $passwordHasher, 
+        EntityManagerInterface $entityManager, 
+        UserRepository $userRepository, 
+        JwtTokenGenerator $jwtTokenGenerator, 
+        RefreshTokenManagerInterface $refreshTokenManager
+    ): Response
     {
         $registrationRequest = $serializer->deserialize($request->getContent(), RegistrationRequest::class, 'json');
 
         $errors = $validator->validate($registrationRequest);
+
         if (count($errors) > 0) {
             $errorsJson = $serializer->serialize($errors, 'json');
             return new Response($errorsJson, Response::HTTP_BAD_REQUEST);
         }
 
         $existingUser = $userRepository->findOneBy(['email' => $registrationRequest->email]);
+
         if ($existingUser) {
-            return $this->json(['message' => 'Пользователь с таким email уже существует!'], Response::HTTP_BAD_REQUEST);
+            return $this->json(['message' => 'Используйте другой email адрес!'], Response::HTTP_BAD_REQUEST);
         }
 
         $user = new User();
         $user->setEmail($registrationRequest->email);
         $user->setRoles(['ROLE_USER']);
         $user->setPassword($passwordHasher->hashPassword($user, $registrationRequest->password));
-
         $entityManager->persist($user);
+
         $entityManager->flush();
 
-        $token = $tokenGenerator->generateToken($user);
-
-        // refresh token
+        $jwtToken = $jwtTokenGenerator->generateToken($user);
         $refreshToken = $refreshTokenManager->create();
+
         $refreshToken->setUsername($user->getEmail());
         $refreshToken->setRefreshToken();
         $refreshToken->setValid((new \DateTime())->add(new \DateInterval('P1D')));
         $entityManager->persist($refreshToken);
+
         $entityManager->flush();
 
         return $this->json([
-            'token' => $token,
+            'token' => $jwtToken,
             'refresh_token' => $refreshToken->getRefreshToken(),
             'roles' => $user->getRoles(),
-        ], Response::HTTP_CREATED);
+        ]);
     }
 
     /**
      * @OA\Get(
      *     path="/api/v1/users/current",
-     *     tags={"User Management"},
-     *     summary="Get current user information",
-     *     description="Returns information about the currently authenticated user.",
+     *     summary="Данные пользователя",
+     *     description="Информация о конкретном пользователе.",
      *     @OA\Response(
      *         response=200,
-     *         description="Information about the user",
+     *         description="Информация о пользователе.",
      *         @OA\JsonContent(
      *             type="object",
      *             @OA\Property(property="email", type="string"),
@@ -111,7 +124,7 @@ class AuthController extends AbstractController
      *     ),
      *     @OA\Response(
      *         response=404,
-     *         description="User not found"
+     *         description="Пользователь не найден"
      *     )
      * )
     */
@@ -119,7 +132,7 @@ class AuthController extends AbstractController
     public function getCurrentUser(#[CurrentUser] ?User $user): JsonResponse
     {
         if (!$user) {
-            return $this->json(['message' => 'Пользователь не найден('], 404);
+            return $this->json(['message' => 'Требуется авторизация '], 404);
         }
 
         return $this->json([
@@ -153,11 +166,11 @@ class AuthController extends AbstractController
      *     ),
      *     @OA\Response(
      *         response=400,
-     *         description="Неверный запрос, отсутствует refresh токен"
+     *         description="Отсутствует refresh токен"
      *     ),
      *     @OA\Response(
      *         response=401,
-     *         description="Refresh токен недействителен или истек его срок"
+     *         description="Refresh токен недействителен"
      *     ),
      *     @OA\Response(
      *         response=404,
@@ -166,7 +179,13 @@ class AuthController extends AbstractController
      * )
     */
     #[Route('/api/v1/token/refresh', name: 'api_token_refresh', methods: ['POST'])]
-    public function refreshToken(Request $request, RefreshTokenManagerInterface $refreshTokenManager, JwtTokenGenerator $jwtTokenGenerator, EntityManagerInterface $entityManager, UserRepository $userRepository): JsonResponse
+    public function refreshToken(
+        Request $request, 
+        RefreshTokenManagerInterface $refreshTokenManager, 
+        JwtTokenGenerator $jwtTokenGenerator, 
+        EntityManagerInterface $entityManager, 
+        UserRepository $userRepository
+    ): JsonResponse
     {
         $requestData = json_decode($request->getContent(), true);
         $refreshTokenValue = $requestData['refresh_token'] ?? null;
@@ -176,11 +195,13 @@ class AuthController extends AbstractController
         }
 
         $refreshToken = $refreshTokenManager->get($refreshTokenValue);
+
         if (!$refreshToken || $refreshToken->getValid() < new \DateTime()) {
-            return $this->json(['message' => 'Токен обновления недействителен или срок его действия истек.'], Response::HTTP_UNAUTHORIZED);
+            return $this->json(['message' => 'Токен обновления недействителен.'], Response::HTTP_UNAUTHORIZED);
         }
 
         $user = $userRepository->findOneByEmail($refreshToken->getUsername());
+        
         if (!$user) {
             return $this->json(['message' => 'Пользователь не найден.'], Response::HTTP_NOT_FOUND);
         }

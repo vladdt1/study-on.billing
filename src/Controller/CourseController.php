@@ -3,100 +3,245 @@
 namespace App\Controller;
 
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
-use Doctrine\ORM\EntityManagerInterface;
-use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\Routing\Annotation\Route;
 use App\Repository\CourseRepository;
-use App\Service\PaymentService;
-use App\Entity\Transaction;
+use Symfony\Component\HttpFoundation\Request;
 use App\Entity\Course;
-use App\Entity\User;
+use Doctrine\ORM\EntityManagerInterface;
+use OpenApi\Annotations as OA;
+use Nelmio\ApiDocBundle\Annotation\Model;
 
 class CourseController extends AbstractController
 {
-    private $paymentService;
+    private EntityManagerInterface $entityManager;
 
-    public function __construct(PaymentService $paymentService)
+    public function __construct(EntityManagerInterface $entityManager)
     {
-        $this->paymentService = $paymentService;
+        $this->entityManager = $entityManager;
     }
-
+    /**
+     * @OA\Get(
+     *     path="/api/v1/courses",
+     *     summary="Список курсов",
+     *     description="Возвращает список всех курсов.",
+     *     @OA\Response(
+     *         response=200,
+     *         description="Список курсов",
+     *         @OA\JsonContent(
+     *             type="array",
+     *             @OA\Items(ref=@Model(type=Course::class))
+     *         )
+     *     )
+     * )
+     */
     #[Route('/api/v1/courses', name: 'get_courses', methods: ['GET'])]
     public function getCourses(CourseRepository $courseRepository): JsonResponse
     {
         $courses = $courseRepository->findAll();
         $data = [];
-        $type = '';
+
         foreach ($courses as $course) {
-            if($course->getType()==0){
-                $type = 'free';
-            }elseif($course->getType()==1){
-                $type = 'rent';
-            }elseif($course->getType()==2){
-                $type = 'buy';
-            }
             $data[] = [
                 'code' => $course->getCode(),
-                'type' => $type,
+                'title' => $course->getTitle(),
+                'description' => $course->getDescription(),
+                'type' => $course->getType(),
                 'price' => $course->getPrice(),
             ];
         }
-        
+
         return $this->json($data);
     }
-
+    /**
+     * @OA\Get(
+     *     path="/api/v1/courses/{code}",
+     *     summary="Данные конкретного курса",
+     *     description="Возвращает данные о курсе.",
+     *     @OA\Parameter(
+     *         name="code",
+     *         in="path",
+     *         required=true,
+     *         description="Код курса",
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Информация о курсе",
+     *         @OA\JsonContent(ref=@Model(type=Course::class))
+     *     ),
+     *     @OA\Response(
+     *         response=404,
+     *         description="Курс не найден"
+     *     )
+     * )
+     */
     #[Route('/api/v1/courses/{code}', name: 'get_course', methods: ['GET'])]
     public function getCourse(CourseRepository $courseRepository, string $code): JsonResponse
     {
         $course = $courseRepository->findOneBy(['code' => $code]);
-        
+
         if (!$course) {
-            return $this->json(['message' => 'Курса не существует'], 404);
+            return $this->json(['message' => 'Course not found'], 404);
         }
 
-        $type = '';
-        if($course->getType()==0){
-            $type = 'free';
-        }elseif($course->getType()==1){
-            $type = 'rent';
-        }elseif($course->getType()==0){
-            $type = 'buy';
-        }
-        
         return $this->json([
             'code' => $course->getCode(),
-            'type' => $type,
+            'title' => $course->getTitle(),
+            'description' => $course->getDescription(),
+            'type' => $course->getType(),
             'price' => $course->getPrice(),
         ]);
     }
-
-    #[Route('/api/v1/courses/{code}/pay', name: 'pay_course', methods: ['POST'])]
-    public function payCourse(Request $request, EntityManagerInterface $em, CourseRepository $courseRepository, string $code, #[CurrentUser] ?User $user, Course $course): JsonResponse
+    /**
+     * @OA\Post(
+     *     path="/api/v1/courses/create",
+     *     summary="Создание нового курса",
+     *     description="Создает новый курс.",
+     *     @OA\RequestBody(
+     *         description="Данные нового курса",
+     *         required=true,
+     *         @OA\JsonContent(ref=@Model(type=Course::class))
+     *     ),
+     *     @OA\Response(
+     *         response=201,
+     *         description="Курс успешно создан",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="success", type="boolean", example=true)
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=400,
+     *         description="Ошибка в данных"
+     *     )
+     * )
+     */
+    #[Route('/api/v1/courses/create', name: 'create_course', methods: ['POST'])]
+    public function createCourse(Request $request, CourseRepository $courseRepository): JsonResponse
     {
-        // Проверяем наличие токена авторизации
-        if (!$user) {
-            return $this->json(['message' => 'Пользователь не найден('], 404);
-        }
-    
-        $course = $courseRepository->findOneByCode($code);
+        $data = json_decode($request->getContent(), true);
 
-        try {
-            $this->paymentService->payCourse($user, $course->getPrice(), $course->getCode());
-
-            // Успешный ответ
-            return $this->json([
-                'success' => true,
-                'course_type' => $course->getType(),
-                'expires_at' => $transaction->getExpiresAt()->format(\DateTime::ISO8601),
-            ]);
-        } catch (\Exception $e) {
-            // Ошибка
-            return $this->json([
-                'code' => $e->getCode(),
-                'message' => $e->getMessage(),
-            ], $e->getCode());
+        if (!isset($data['code'], $data['title'], $data['type'], $data['price'], $data['description'])) {
+            return $this->json(['message' => 'Недостаточно данных для создания курса'], 400);
         }
+
+        $existingCourse = $courseRepository->findOneBy(['code' => $data['code']]);
+        if ($existingCourse) {
+            return $this->json(['message' => 'Используйте другой символьный код'], 400);
+        }
+
+        $course = new Course();
+        $course->setCode($data['code']);
+        $course->setTitle($data['title']);
+        $course->setDescription($data['description']);
+        $course->setType($data['type']);
+        $course->setPrice($data['price']);
+
+        $this->entityManager->persist($course);
+
+        $this->entityManager->flush();
+
+        return $this->json(['success' => true], 201);
     }
+    /**
+     * @OA\Post(
+     *     path="/api/v1/courses/{code}/update",
+     *     summary="Обновление курса",
+     *     description="Обновляет данные курса.",
+     *     @OA\Parameter(
+     *         name="code",
+     *         in="path",
+     *         required=true,
+     *         description="Код курса",
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\RequestBody(
+     *         description="Обновленные данные курса",
+     *         required=true,
+     *         @OA\JsonContent(ref=@Model(type=Course::class))
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Курс успешно обновлен",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="success", type="boolean", example=true)
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=400,
+     *         description="Неверные данные для обновления"
+     *     ),
+     *     @OA\Response(
+     *         response=404,
+     *         description="Курс не найден"
+     *     )
+     * )
+     */
+    #[Route('/api/v1/courses/{code}/update', name: 'update_course', methods: ['POST'])]
+    public function updateCourse(Request $request, CourseRepository $courseRepository, string $code): JsonResponse
+    {
+        $data = json_decode($request->getContent(), true);
+
+        if (!isset($data['code'], $data['title'], $data['type'], $data['price'], $data['description'])) {
+            return $this->json(['message' => 'Недостаточно данных для обновления курса'], 400);
+        }
+
+        $course = $courseRepository->findOneBy(['code' => $code]);
+        if (!$course) {
+            return $this->json(['message' => 'Курс не найден'], 404);
+        }
+
+        $course->setCode($data['code']);
+        $course->setTitle($data['title']);
+        $course->setDescription($data['description']);
+        $course->setType($data['type']);
+        $course->setPrice($data['price']);
+
+        $this->entityManager->flush();
+
+        return $this->json(['success' => true]);
+    }
+
+    /**
+     * @OA\Delete(
+     *     path="/api/v1/courses/{code}/delete",
+     *     summary="Удаление курса",
+     *     description="Удаляет курс по предоставленному коду.",
+     *     @OA\Parameter(
+     *         name="code",
+     *         in="path",
+     *         required=true,
+     *         description="Код курса для удаления",
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Курс успешно удален",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="success", type="boolean", example=true)
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=404,
+     *         description="Курс не найден"
+     *     )
+     * )
+     */
+    #[Route('/api/v1/courses/{code}/delete', name: 'delete_course', methods: ['DELETE'])]
+    public function deleteCourse(CourseRepository $courseRepository, string $code): JsonResponse
+    {
+        $course = $courseRepository->findOneBy(['code' => $code]);
+        if (!$course) {
+            return $this->json(['message' => 'Курс не найден'], 404);
+        }
+
+        $this->entityManager->remove($course);
+        $this->entityManager->flush();
+
+        return $this->json(['success' => true]);
+    }
+
 }
