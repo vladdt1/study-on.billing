@@ -15,17 +15,16 @@ class PaymentEndingNotificationCommand extends Command
 {
     protected static $defaultName = 'payment:ending:notification';
 
-    private $mailer;
-    private $entityManager;
-    private $userRepository;
+    private MailerInterface $mailer;
+    private EntityManagerInterface $entityManager;
+    private UserRepository $userRepo;
 
-    public function __construct(MailerInterface $mailer, EntityManagerInterface $entityManager, UserRepository $userRepository)
+    public function __construct(MailerInterface $mailer, EntityManagerInterface $entityManager, UserRepository $userRepo)
     {
+        parent::__construct();
         $this->mailer = $mailer;
         $this->entityManager = $entityManager;
-        $this->userRepository = $userRepository;
-
-        parent::__construct();
+        $this->userRepo = $userRepo;
     }
 
     protected function configure()
@@ -37,10 +36,10 @@ class PaymentEndingNotificationCommand extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $users = $this->userRepository->findUsersWithEndingRentals();
+        $userList = $this->userRepo->findUsersWithEndingRentals();
 
-        foreach ($users as $user) {
-            $transactions = $user->getTransactions()->filter(function($transaction) {
+        foreach ($userList as $user) {
+            $endingRentals = $user->getTransactions()->filter(function($transaction) {
                 $expiresAt = $transaction->getExpiresAt();
                 $tomorrow = (new \DateTime())->modify('+1 day');
                 return $transaction->getCourse()->getType() === Course::TYPE_RENT &&
@@ -48,27 +47,27 @@ class PaymentEndingNotificationCommand extends Command
                        $expiresAt < $tomorrow->modify('+1 day')->setTime(0, 0, 0);
             });
 
-            if ($transactions->isEmpty()) {
+            if ($endingRentals->isEmpty()) {
                 continue;
             }
 
-            $courseNames = array_map(function($transaction) {
+            $courseDetails = array_map(function($transaction) {
                 return sprintf(
                     "%s действует до %s",
                     $transaction->getCourse()->getTitle(),
                     $transaction->getExpiresAt()->format('d.m.Y H:i')
                 );
-            }, $transactions->toArray());
+            }, $endingRentals->toArray());
 
-            $courseList = implode("\n", $courseNames);
+            $courseListStr = implode("\n", $courseDetails);
 
             $email = (new Email())
                 ->from('no-reply@example.com')
                 ->to($user->getEmail())
-                ->subject('Уведомление об окончании срока аренды курсов')
+                ->subject('Course Rental Expiry Notification')
                 ->text(sprintf(
-                    "Уважаемый клиент! У вас есть курсы, срок аренды которых подходит к концу:\n%s",
-                    $courseList
+                    "Dear Customer, the following courses you rented are expiring soon:\n%s",
+                    $courseListStr
                 ));
 
             $this->mailer->send($email);
@@ -79,4 +78,3 @@ class PaymentEndingNotificationCommand extends Command
         return Command::SUCCESS;
     }
 }
-

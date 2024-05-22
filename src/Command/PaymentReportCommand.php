@@ -8,72 +8,86 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Mailer\MailerInterface;
 use Symfony\Component\Mime\Email;
 use Doctrine\ORM\EntityManagerInterface;
-use App\Repository\UserRepository;
+use Twig\Environment as TwigEnvironment;
 use App\Entity\Course;
+use App\Entity\Transaction;
 
-class PaymentEndingNotificationCommand extends Command
+class PaymentReportCommand extends Command
 {
-    protected static $defaultName = 'payment:ending:notification';
+    protected static $defaultName = 'payment:report';
 
-    private MailerInterface $mailer;
-    private EntityManagerInterface $entityManager;
-    private UserRepository $userRepo;
+    private $mailer;
+    private $entityManager;
+    private $twig;
 
-    public function __construct(MailerInterface $mailer, EntityManagerInterface $entityManager, UserRepository $userRepo)
+    public function __construct(MailerInterface $mailer, EntityManagerInterface $entityManager, TwigEnvironment $twig)
     {
         parent::__construct();
         $this->mailer = $mailer;
         $this->entityManager = $entityManager;
-        $this->userRepo = $userRepo;
+        $this->twig = $twig;
     }
 
     protected function configure()
     {
         $this
             ->setName(self::$defaultName)
-            ->setDescription('Sends notification emails to users whose course rentals are ending soon.');
+            ->setDescription('Generates and sends a payment report for the last month.');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $userList = $this->userRepo->findUsersWithEndingRentals();
+        $dateFrom = (new \DateTime())->modify('-1 month');
 
-        foreach ($userList as $user) {
-            $endingRentals = $user->getTransactions()->filter(function($transaction) {
-                $expiresAt = $transaction->getExpiresAt();
-                $tomorrow = (new \DateTime())->modify('+1 day');
-                return $transaction->getCourse()->getType() === Course::TYPE_RENT &&
-                       $expiresAt >= $tomorrow->setTime(0, 0, 0) &&
-                       $expiresAt < $tomorrow->modify('+1 day')->setTime(0, 0, 0);
-            });
+        $transactionRepo = $this->entityManager->getRepository(Transaction::class);
+        $transactions = $transactionRepo->createQueryBuilder('t')
+            ->where('t.createdAt >= :dateFrom')
+            ->setParameter('dateFrom', $dateFrom)
+            ->getQuery()
+            ->getResult();
 
-            if ($endingRentals->isEmpty()) {
+        $reportDetails = [];
+        $totalSum = 0;
+
+        foreach ($transactions as $transaction) {
+            $course = $transaction->getCourse();
+            if (!$course) {
                 continue;
             }
 
-            $courseDetails = array_map(function($transaction) {
-                return sprintf(
-                    "%s действует до %s",
-                    $transaction->getCourse()->getTitle(),
-                    $transaction->getExpiresAt()->format('d.m.Y H:i')
-                );
-            }, $endingRentals->toArray());
+            $courseTitle = $course->getTitle();
+            $courseCategory = $course->getType() == Course::TYPE_RENT ? 'Rental' : 'Purchase';
+            $amount = $transaction->getAmount();
 
-            $courseListStr = implode("\n", $courseDetails);
+            if (!isset($reportDetails[$courseTitle])) {
+                $reportDetails[$courseTitle] = [
+                    'type' => $courseCategory,
+                    'count' => 0,
+                    'total' => 0,
+                ];
+            }
 
-            $email = (new Email())
-                ->from('no-reply@example.com')
-                ->to($user->getEmail())
-                ->subject('Course Rental Expiry Notification')
-                ->text(sprintf(
-                    "Dear Customer, the following courses you rented are expiring soon:\n%s",
-                    $courseListStr
-                ));
-
-            $this->mailer->send($email);
+            $reportDetails[$courseTitle]['count']++;
+            $reportDetails[$courseTitle]['total'] += $amount;
+            $totalSum += $amount;
         }
 
-        $output->writeln('Notification emails have been sent successfully.');
+        $reportContent = $this->twig->render('email/email.html.twig', [
+            'reportDetails' => $reportDetails,
+            'totalSum' => $totalSum,
+            'oneDate' => $dateFrom->format('d.m.Y'),
+            'twoDate' => (new \DateTime())->format('d.m.Y'),
+        ]);
+
+        $email = (new Email())
+            ->from('no-reply@example.com')
+            ->to('admin@example.com')
+            ->subject('Monthly Payment Report')
+            ->html($reportContent);
+
+        $this->mailer->send($email);
+
+        $output->writeln('Payment report has been sent successfully.');
 
         return Command::SUCCESS;
     }
