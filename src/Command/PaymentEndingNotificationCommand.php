@@ -42,7 +42,9 @@ class PaymentEndingNotificationCommand extends Command
             $endingRentals = $user->getTransactions()->filter(function($transaction) {
                 $expiresAt = $transaction->getExpiresAt();
                 $tomorrow = (new \DateTime())->modify('+1 day');
-                return $transaction->getCourse()->getType() === Course::TYPE_RENT &&
+                $course = $transaction->getCourse();
+                return $course !== null &&
+                       $course->getType() === Course::TYPE_RENT &&
                        $expiresAt >= $tomorrow->setTime(0, 0, 0) &&
                        $expiresAt < $tomorrow->modify('+1 day')->setTime(0, 0, 0);
             });
