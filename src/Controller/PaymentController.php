@@ -94,9 +94,9 @@ class PaymentController extends AbstractController
             return $this->json(['message' => 'Ошибка при оплате'], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
         }
 
-        $expiresAt = $course->getType() === 2
+        $expiresAt = $course->getType() === Course::TYPE_RENT
             ? (new \DateTimeImmutable())->modify('+1 month')->format(\DateTime::ISO8601)
-            : (new \DateTimeImmutable())->modify('+100 months')->format(\DateTime::ISO8601);
+            : (new \DateTimeImmutable())->format(\DateTime::ISO8601);
 
         return $this->json([
             'success' => true,

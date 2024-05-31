@@ -63,7 +63,7 @@ class PaymentService
 
             if ($course->getType() === 1) {
                 $transaction->setType('payment')
-                    ->setExpiresAt((new \DateTimeImmutable())->modify('+100 month'));
+                    ->setExpiresAt((new \DateTimeImmutable()));
             } elseif ($course->getType() === 2) {
                 $transaction->setType('rent')
                     ->setExpiresAt((new \DateTimeImmutable())->modify('+1 month'));
